@@ -1,0 +1,71 @@
+name: nms-desk
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-desk}
+      POSTGRES_USER: ${POSTGRES_USER:-desk}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      - nms-desk
+
+  web:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-desk}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-desk}
+      PORT: ${PORT:-4000}
+      PUBLIC_HOST: ${PUBLIC_HOST:-tickets.newmarketsecurity.com}
+      PUBLIC_URL: ${PUBLIC_URL:-https://tickets.newmarketsecurity.com}
+      OIDC_ISSUER: ${OIDC_ISSUER:-https://auth.newmarketsecurity.com/realms/nms}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-tickets}
+    ports:
+      - "127.0.0.1:${PORT:-4000}:4000"
+    labels:
+      - caddy=${PUBLIC_HOST:-tickets.newmarketsecurity.com}
+      - caddy.reverse_proxy={{upstreams 4000}}
+      - traefik.enable=true
+      - traefik.docker.network=${EDGE_NETWORK:-proxy}
+      - traefik.http.routers.desk.rule=Host(`${PUBLIC_HOST:-tickets.newmarketsecurity.com}`)
+      - traefik.http.routers.desk.entrypoints=websecure
+      - traefik.http.routers.desk.tls=true
+      - traefik.http.routers.desk.tls.certresolver=letsencrypt
+      - traefik.http.services.desk.loadbalancer.server.port=4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "node -e \"fetch('http://127.0.0.1:4000/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\"",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+    mem_limit: 512m
+    networks:
+      nms-desk: {}
+      edge: {}
+
+volumes:
+  postgres_data:
+
+networks:
+  nms-desk:
+    name: nms-desk
+  edge:
+    name: ${EDGE_NETWORK:-proxy}
+    external: true

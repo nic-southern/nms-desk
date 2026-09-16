@@ -1,0 +1,48 @@
+name: validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Test
+        run: npm test
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Compose must join the existing edge network
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path("compose.yaml").read_text()
+          assert "80:80" not in text and "443:443" not in text
+          assert "image: caddy" not in text.lower()
+          assert "caddy=" in text
+          assert "traefik.enable=true" in text
+          assert "EDGE_NETWORK:-proxy" in text
+          assert "external: true" in text
+          print("compose labels look safe")
+          PY
+      - name: Template must not contain live secrets
+        run: |
+          if git grep -nE 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' -- ':!.github'; then
+            echo "refusing private key material" >&2
+            exit 1
+          fi
+          if git grep -nE 'postgres://[^:]+:[^@]+@' -- ':!.github' | grep -v replace_me; then
+            echo "refusing inline database URLs with passwords" >&2
+            exit 1
+          fi
+          if grep -RInE 'replace_me' .env.example >/dev/null; then
+            true
+          fi

@@ -14,8 +14,8 @@ set -a
 set +a
 
 if grep -q 'replace_me' .env; then
-  echo "replace every replace_me value in .env before starting (ZAMMAD_INGEST_TOKEN may wait until configure-zammad.sh)" >&2
-  if grep -v 'ZAMMAD_INGEST_TOKEN=' .env | grep -q 'replace_me'; then
+  echo "replace every replace_me value in .env before starting (WINDSHIFT_API_TOKEN may wait until you mint one)" >&2
+  if grep -v 'WINDSHIFT_API_TOKEN=' .env | grep -q 'replace_me'; then
     exit 1
   fi
 fi
@@ -26,5 +26,10 @@ if ! docker network inspect "$EDGE_NETWORK" >/dev/null 2>&1; then
   docker network create "$EDGE_NETWORK" >/dev/null
 fi
 
-docker compose up -d --build "$@"
-echo "after rails is healthy, run ./scripts/update-tickets-client.sh and ./scripts/configure-zammad.sh"
+if ! docker network inspect nms-pm >/dev/null 2>&1; then
+  echo "nms-pm network is missing; start Windshift (nms-pm) first" >&2
+  exit 1
+fi
+
+docker compose up -d --build --remove-orphans "$@"
+echo "ingest on loopback :4000; UI and ingest host is ${PUBLIC_URL:-https://pm.newmarketsecurity.com}"

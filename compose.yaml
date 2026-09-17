@@ -15,12 +15,12 @@ services:
     ports:
       - "127.0.0.1:${INGEST_PORT:-4000}:4000"
     labels:
-      - caddy_0=${PUBLIC_HOST:-tickets.newmarketsecurity.com}
+      - caddy_0=${PUBLIC_HOST:-pm.newmarketsecurity.com}
       - caddy_0.handle=/ingest*
       - caddy_0.handle.reverse_proxy={{upstreams 4000}}
       - traefik.enable=true
       - traefik.docker.network=${EDGE_NETWORK:-proxy}
-      - traefik.http.routers.desk-ingest.rule=Host(`${PUBLIC_HOST:-tickets.newmarketsecurity.com}`) && PathPrefix(`/ingest`)
+      - traefik.http.routers.desk-ingest.rule=Host(`${PUBLIC_HOST:-pm.newmarketsecurity.com}`) && PathPrefix(`/ingest`)
       - traefik.http.routers.desk-ingest.priority=100
       - traefik.http.routers.desk-ingest.entrypoints=websecure
       - traefik.http.routers.desk-ingest.tls=true

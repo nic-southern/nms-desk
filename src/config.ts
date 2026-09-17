@@ -20,12 +20,18 @@ export function loadConfig() {
   return {
     port,
     ingestHmacSecret: required("INGEST_HMAC_SECRET"),
-    zammadUrl: optional("ZAMMAD_URL", "http://zammad-nginx:8080").replace(
-      /\/$/,
-      ""
+    zammadUrl: optional(
+      "WINDSHIFT_URL",
+      optional("ZAMMAD_URL", "http://windshift:8080")
+    ).replace(/\/$/, ""),
+    zammadToken: optional(
+      "WINDSHIFT_API_TOKEN",
+      optional("ZAMMAD_INGEST_TOKEN", "")
     ),
-    zammadToken: optional("ZAMMAD_INGEST_TOKEN", ""),
-    zammadGroup: optional("ZAMMAD_GROUP", "Users"),
+    zammadGroup: optional(
+      "WINDSHIFT_WORKSPACE",
+      optional("ZAMMAD_GROUP", "Users")
+    ),
   }
 }
 

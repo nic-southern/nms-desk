@@ -19,24 +19,18 @@ export function loadConfig() {
 
   return {
     port,
-    productName: optional("PRODUCT_NAME", "Tickets"),
-    publicHost: optional("PUBLIC_HOST", "tickets.newmarketsecurity.com"),
-    publicUrl: optional("PUBLIC_URL", "http://localhost:4000").replace(/\/$/, ""),
-    databaseUrl: required("DATABASE_URL"),
-    sessionSecret: required("SESSION_SECRET"),
-    oidcIssuer: optional(
-      "OIDC_ISSUER",
-      "https://auth.newmarketsecurity.com/realms/nms"
-    ),
-    oidcClientId: optional("OIDC_CLIENT_ID", "tickets"),
-    oidcClientSecret: required("OIDC_CLIENT_SECRET"),
-    oidcScopes: optional("OIDC_SCOPES", "openid profile email"),
     ingestHmacSecret: required("INGEST_HMAC_SECRET"),
+    zammadUrl: optional("ZAMMAD_URL", "http://zammad-nginx:8080").replace(
+      /\/$/,
+      ""
+    ),
+    zammadToken: optional("ZAMMAD_INGEST_TOKEN", ""),
+    zammadGroup: optional("ZAMMAD_GROUP", "Users"),
   }
 }
 
 export type AppConfig = ReturnType<typeof loadConfig>
 
 export function isPlaceholder(value: string) {
-  return value === "replace_me" || value.length < 8
+  return !value || value === "replace_me" || value.length < 8
 }

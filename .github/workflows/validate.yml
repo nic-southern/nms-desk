@@ -31,8 +31,17 @@ jobs:
           assert "traefik.enable=true" in text
           assert "EDGE_NETWORK:-proxy" in text
           assert "external: true" in text
+          assert "PathPrefix(`/ingest`)" in text
+          assert "ghcr.io/zammad/zammad" in text
+          assert "ELASTICSEARCH_ENABLED" in text and "false" in text
+          assert "zammad-elasticsearch" not in text
           print("compose labels look safe")
           PY
+      - name: Custom ticket UI must be gone
+        run: |
+          test ! -f src/html.ts
+          test ! -f src/oidc.ts
+          test ! -f src/changes.ts
       - name: Template must not contain live secrets
         run: |
           if git grep -nE 'BEGIN (RSA |OPENSSH )?PRIVATE KEY' -- ':!.github'; then

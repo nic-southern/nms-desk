@@ -27,14 +27,15 @@ jobs:
           text = Path("compose.yaml").read_text()
           assert "80:80" not in text and "443:443" not in text
           assert "image: caddy" not in text.lower()
-          assert "caddy=" in text
+          assert "caddy_0=" in text
           assert "traefik.enable=true" in text
           assert "EDGE_NETWORK:-proxy" in text
           assert "external: true" in text
           assert "PathPrefix(`/ingest`)" in text
-          assert "ghcr.io/zammad/zammad" in text
-          assert "ELASTICSEARCH_ENABLED" in text and "false" in text
-          assert "zammad-elasticsearch" not in text
+          assert "ghcr.io/zammad/zammad" not in text
+          assert "name: nms-pm" in text
+          assert "tickets.newmarketsecurity.com" not in text
+          assert "pm.newmarketsecurity.com" in text
           print("compose labels look safe")
           PY
       - name: Custom ticket UI must be gone

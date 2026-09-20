@@ -2,24 +2,27 @@ import { serve } from "@hono/node-server"
 
 import { createApp } from "./app.ts"
 import { isPlaceholder, loadConfig } from "./config.ts"
-import { createZammadStore, zammadReady } from "./zammad.ts"
+import { createWindshiftStore, windshiftReady } from "./windshift.ts"
 
 async function main() {
   const config = loadConfig()
   if (isPlaceholder(config.ingestHmacSecret)) {
     throw new Error("replace placeholder secrets in .env before starting")
   }
+  if (isPlaceholder(config.zammadToken)) {
+    throw new Error("set WINDSHIFT_API_TOKEN before starting")
+  }
 
-  const store = createZammadStore({
+  const store = createWindshiftStore({
     baseUrl: config.zammadUrl,
     token: config.zammadToken,
-    group: config.zammadGroup,
+    workspace: config.zammadGroup,
   })
   const app = createApp({
     config,
     store,
     ready: () =>
-      zammadReady({
+      windshiftReady({
         baseUrl: config.zammadUrl,
         token: config.zammadToken,
       }),

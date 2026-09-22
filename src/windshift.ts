@@ -481,7 +481,7 @@ export function createWindshiftStore(input: {
         method: "POST",
         body: JSON.stringify({ content: note.body }),
       })
-      if (!noteResult.ok) throw new Error(`windshift note failed: ${noteResult.status}`)
+      if (!result.ok) throw new Error(`windshift note failed: ${result.status}`)
       return {
         id: `note-${ticketId}`,
         ticketId,

@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_DISK
+@/tmp/content__src__ingest.ts

@@ -175,6 +175,35 @@ test("alert.escalated raises severity; alert.resolved writes a close", async () 
   if (resolved.ignored) throw new Error("expected ticket")
   assert.equal(resolved.ticket.status, "resolved")
   assert.ok(resolved.ticket.resolution)
+  assert.equal(store.notes.length, 1) // escalate note only; resolve uses update.notes
+
+  const again = await applyLockhavenEnvelope(store, {
+    version: 1,
+    event: "alert.resolved",
+    occurredAt: "2026-09-16T12:25:00.000Z",
+    alert: { ...alert, status: "resolved" },
+    accessRequest: null,
+  })
+  assert.equal(again.ignored, false)
+  if (again.ignored) throw new Error("expected ticket")
+  assert.equal(again.ticket.status, "resolved")
+  assert.equal(store.notes.length, 1)
+})
+
+test("alert.resolved fails closed when no ticket exists", async () => {
+  const store = memoryStore()
+  await assert.rejects(
+    () =>
+      applyLockhavenEnvelope(store, {
+        version: 1,
+        event: "alert.resolved",
+        occurredAt: "2026-09-16T12:20:00.000Z",
+        alert: { ...alert, status: "resolved" },
+        accessRequest: null,
+      }),
+    /No ticket found/
+  )
+  assert.equal(store.tickets.length, 0)
 })
 
 test("access.requested opens a VPN/session ticket with device, site, and reason", async () => {

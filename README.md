@@ -117,7 +117,7 @@ Events:
 | --- | --- |
 | `alert.opened` | Open or reopen a Windshift item tagged `lh-alert-{id}` |
 | `alert.escalated` | Raise priority, add a note |
-| `alert.resolved` | Write a resolution and close |
+| `alert.resolved` | Transition the linked item to Done (fail closed if missing) |
 | `access.requested` | Open a remote-session item |
 | `channel.test` | Acknowledge, no item |
 

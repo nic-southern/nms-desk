@@ -4,7 +4,6 @@ import {
   higherSeverity,
   mapAlertCategory,
   mapAlertSeverity,
-  type NewTicket,
   type TicketRecord,
   type TicketStore,
 } from "./types.ts"
@@ -170,27 +169,10 @@ async function applyAlertEvent(
   const occurred = envelope.occurredAt
 
   if (!existing) {
-    if (event === "alert.resolved") {
-      const ticket = await store.create({
-        title: alert.title,
-        severity,
-        category: mapAlertCategory(alert.kind),
-        status: "resolved",
-        source: "alert",
-        requesterName: "Monitoring",
-        requesterEmail: "",
-        siteId: alert.siteId ?? null,
-        siteName: siteNameFromAlert(alert),
-        deviceId: alert.deviceId ?? null,
-        deviceName: deviceNameFromAlert(alert),
-        assetId: asset.assetId,
-        assetTag: asset.assetTag,
-        lockhavenAlertId: alert.id,
-        notes: `Alert resolved at ${occurred}.`,
-        resolution: `Alert ${alert.id} resolved.`,
-        resolvedAt: new Date(occurred),
-      } satisfies NewTicket)
-      return { ok: true, ignored: false, ticket, created: true }
+    // Fail closed: never invent a ticket from a resolve/escalate with no open
+    // alert item. Opens still create.
+    if (event === "alert.resolved" || event === "alert.escalated") {
+      throw new IngestError(`No ticket found for alert ${alert.id}`)
     }
 
     const ticket = await store.create({
@@ -210,26 +192,26 @@ async function applyAlertEvent(
       lockhavenAlertId: alert.id,
       notes: `Opened from alert ${alert.id} (${alert.kind ?? "unknown"}).`,
     })
-    if (event === "alert.escalated") {
-      await store.addNote(ticket.id, {
-        authorEmail: "",
-        authorName: "Monitoring",
-        body: `Alert escalated at ${occurred}.`,
-      })
-    }
     return { ok: true, ignored: false, ticket, created: true }
   }
 
   if (event === "alert.opened") {
-    await store.addNote(existing.id, {
-      authorEmail: "",
-      authorName: "Monitoring",
-      body: `Alert reported again at ${occurred}.`,
-    })
     const ticket =
       existing.status === "resolved" || existing.status === "closed"
-        ? await store.update(existing.id, { status: "open", resolvedAt: null, resolution: null })
+        ? await store.update(existing.id, {
+            status: "open",
+            resolvedAt: null,
+            resolution: null,
+            notes: `Alert reported again at ${occurred}.`,
+          })
         : existing
+    if (ticket === existing) {
+      await store.addNote(existing.id, {
+        authorEmail: "",
+        authorName: "Monitoring",
+        body: `Alert reported again at ${occurred}.`,
+      })
+    }
     return { ok: true, ignored: false, ticket, created: false }
   }
 
@@ -244,13 +226,18 @@ async function applyAlertEvent(
     return { ok: true, ignored: false, ticket, created: false }
   }
 
-  await store.addNote(existing.id, {
-    authorEmail: "",
-    authorName: "Monitoring",
-    body: `Alert resolved at ${occurred}.`,
-  })
+  // Idempotent close: one transition is enough. Do not spam resolve comments
+  // when Hub retries a delivery or re-sends alert.resolved.
+  if (existing.status === "resolved" || existing.status === "closed") {
+    return { ok: true, ignored: false, ticket: existing, created: false }
+  }
+
+  // Transition first (via store.update), then a single resolve comment.
+  // Previously addNote ran before a failing PATCH, which left tickets open
+  // and produced one "Alert resolved at …" comment per Hub retry.
   const ticket = await store.update(existing.id, {
-    status: existing.status === "closed" ? "closed" : "resolved",
+    status: "resolved",
+    notes: `Alert resolved at ${occurred}.`,
     resolution: existing.resolution ?? `Alert ${alert.id} resolved.`,
     resolvedAt: existing.resolvedAt ?? new Date(occurred),
   })

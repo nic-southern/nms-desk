@@ -130,6 +130,46 @@ function statusFromItem(raw: WsItem): TicketStatus {
   return "open"
 }
 
+/** Map desk ticket status to a Windshift workspace status id. Fail closed. */
+export function statusIdForTicketStatus(
+  status: TicketStatus,
+  statusMap: Record<string, number>
+): number {
+  if (status === "resolved" || status === "closed") {
+    const done =
+      statusMap.done ??
+      statusMap.closed ??
+      statusMap.complete ??
+      statusMap.completed
+    if (done == null) {
+      throw new Error("windshift completed status not found")
+    }
+    return done
+  }
+  if (status === "in_progress") {
+    const progress =
+      statusMap.in_progress ??
+      statusMap["in-progress"] ??
+      statusMap.progress
+    if (progress == null) {
+      throw new Error("windshift in-progress status not found")
+    }
+    return progress
+  }
+  if (status === "waiting") {
+    const waiting = statusMap.waiting ?? statusMap.wait ?? statusMap.blocked
+    if (waiting == null) {
+      throw new Error("windshift waiting status not found")
+    }
+    return waiting
+  }
+  const open = statusMap.open ?? statusMap.todo ?? statusMap["to_do"] ?? statusMap["to-do"]
+  if (open == null) {
+    throw new Error("windshift open status not found")
+  }
+  return open
+}
+
 export function recordFromWindshift(raw: WsItem, notes = ""): TicketRecord {
   const tags = tagsFromDescription(raw.description)
   const status = statusFromItem(raw)
@@ -192,6 +232,18 @@ function priorityIdFor(severity: TicketSeverity, map: Record<string, number>): n
   )
 }
 
+function itemFromBody(body: unknown): WsItem {
+  const root = body as { data?: WsItem | { item?: WsItem } }
+  const data = root.data
+  if (data && typeof data === "object" && "item" in data && data.item) {
+    return data.item
+  }
+  if (data && typeof data === "object" && "id" in data) {
+    return data as WsItem
+  }
+  throw new Error("windshift response missing item")
+}
+
 export function createWindshiftStore(input: {
   baseUrl: string
   token: string
@@ -204,19 +256,21 @@ export function createWindshiftStore(input: {
   let priorityMap: Record<string, number> = {}
   let statusMap: Record<string, number> = {}
   let defaultItemTypeId: number | null = null
+  let metaReady = false
 
   async function api(
     path: string,
     init?: RequestInit
   ): Promise<{ ok: boolean; status: number; body: unknown }> {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${input.token}`,
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      ...(init?.headers as Record<string, string> | undefined),
+    }
     const response = await fetchImpl(`${baseUrl}${path}`, {
       ...init,
-      headers: {
-        Authorization: `Bearer ${input.token}`,
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
+      headers,
     })
     const text = await response.text()
     let body: unknown = null
@@ -231,7 +285,7 @@ export function createWindshiftStore(input: {
   }
 
   async function ensureMeta() {
-    if (workspaceId != null && defaultItemTypeId != null) return
+    if (metaReady && workspaceId != null) return
     const ws = await api("/rest/api/v2/workspaces")
     if (!ws.ok) throw new Error(`windshift workspaces failed: ${ws.status}`)
     const list = ((ws.body as { data?: Array<{ id: number; key: string; name: string }> })
@@ -247,46 +301,50 @@ export function createWindshiftStore(input: {
     workspaceId = match.id
 
     const pri = await api(`/rest/api/v2/workspaces/${workspaceId}/priorities`)
-    if (pri.ok) {
-      const rows = ((pri.body as { data?: Array<{ id: number; builtin_key?: string; name?: string }> })
-        .data ?? [])
-      priorityMap = {}
-      for (const row of rows) {
-        const key = (row.builtin_key || row.name || "").toLowerCase()
-        if (key) priorityMap[key] = row.id
-        if (key === "normal") priorityMap.medium = row.id
-      }
+    if (!pri.ok) throw new Error(`windshift priorities failed: ${pri.status}`)
+    const priRows = ((pri.body as { data?: Array<{ id: number; builtin_key?: string; name?: string }> })
+      .data ?? [])
+    priorityMap = {}
+    for (const row of priRows) {
+      const key = (row.builtin_key || row.name || "").toLowerCase()
+      if (key) priorityMap[key] = row.id
+      if (key === "normal") priorityMap.medium = row.id
     }
 
     const st = await api(`/rest/api/v2/workspaces/${workspaceId}/statuses`)
-    if (st.ok) {
-      const rows = ((st.body as { data?: Array<{ id: number; builtin_key?: string; name?: string }> })
-        .data ?? [])
-      statusMap = {}
-      for (const row of rows) {
-        const key = (row.builtin_key || row.name || "").toLowerCase()
-        if (key) statusMap[key] = row.id
-      }
+    if (!st.ok) throw new Error(`windshift statuses failed: ${st.status}`)
+    const stRows = ((st.body as { data?: Array<{ id: number; builtin_key?: string; name?: string }> })
+      .data ?? [])
+    statusMap = {}
+    for (const row of stRows) {
+      const key = (row.builtin_key || row.name || "").toLowerCase()
+      if (key) statusMap[key] = row.id
+    }
+    if (Object.keys(statusMap).length === 0) {
+      throw new Error("windshift statuses empty")
     }
 
     const types = await api(`/rest/api/v2/workspaces/${workspaceId}/item-types`)
-    if (types.ok) {
-      const rows = ((types.body as { data?: Array<{ id: number; builtin_key?: string }> }).data ??
-        [])
-      defaultItemTypeId =
-        rows.find((r) => r.builtin_key === "task")?.id ??
-        rows.find((r) => r.builtin_key === "bug")?.id ??
-        rows.find((r) => r.builtin_key === "story")?.id ??
-        rows[0]?.id ??
-        null
+    if (!types.ok) throw new Error(`windshift item-types failed: ${types.status}`)
+    const typeRows = ((types.body as { data?: Array<{ id: number; builtin_key?: string }> }).data ??
+      [])
+    defaultItemTypeId =
+      typeRows.find((r) => r.builtin_key === "task")?.id ??
+      typeRows.find((r) => r.builtin_key === "bug")?.id ??
+      typeRows.find((r) => r.builtin_key === "story")?.id ??
+      typeRows[0]?.id ??
+      null
+    if (defaultItemTypeId == null) {
+      throw new Error("windshift item type not found")
     }
+    metaReady = true
   }
 
   async function load(id: string | number): Promise<TicketRecord | null> {
     const result = await api(`/rest/api/v2/items/${id}`)
     if (result.status === 404) return null
     if (!result.ok) throw new Error(`windshift item ${id} failed: ${result.status}`)
-    const raw = (result.body as { data: WsItem }).data
+    const raw = itemFromBody(result.body)
     return recordFromWindshift(raw, raw.description ?? "")
   }
 
@@ -305,6 +363,26 @@ export function createWindshiftStore(input: {
       }
     }
     return null
+  }
+
+  async function transition(id: string | number, toStatusId: number) {
+    const result = await api(`/rest/api/v2/items/${id}/transition`, {
+      method: "POST",
+      body: JSON.stringify({ to_status_id: toStatusId }),
+    })
+    if (!result.ok) {
+      throw new Error(`windshift transition failed: ${result.status}`)
+    }
+  }
+
+  async function patchItem(id: string | number, payload: Record<string, unknown>) {
+    if (Object.keys(payload).length === 0) return
+    const result = await api(`/rest/api/v2/items/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/merge-patch+json" },
+      body: JSON.stringify(payload),
+    })
+    if (!result.ok) throw new Error(`windshift update failed: ${result.status}`)
   }
 
   return {
@@ -331,13 +409,12 @@ export function createWindshiftStore(input: {
         label_ids: [],
         milestone_ids: [],
         custom_field_values: {},
+        item_type_id: defaultItemTypeId,
       }
-      if (defaultItemTypeId != null) payload.item_type_id = defaultItemTypeId
       const priorityId = priorityIdFor(ticket.severity, priorityMap)
       if (priorityId != null) payload.priority_id = priorityId
-      if (ticket.status === "resolved" || ticket.status === "closed") {
-        const done = statusMap.done ?? statusMap.closed
-        if (done != null) payload.status_id = done
+      if (ticket.status) {
+        payload.status_id = statusIdForTicketStatus(ticket.status, statusMap)
       }
 
       const result = await api("/rest/api/v2/items", {
@@ -347,26 +424,23 @@ export function createWindshiftStore(input: {
       if (!result.ok) {
         throw new Error(`windshift create failed: ${result.status}`)
       }
-      const raw = (result.body as { data: WsItem }).data
+      const raw = itemFromBody(result.body)
       return recordFromWindshift(raw, ticket.notes ?? "")
     },
     async update(id, patch: TicketPatch) {
       await ensureMeta()
+
+      // Status changes must use the transition endpoint; PATCH rejects status_id
+      // (415/400) and previously left tickets open while comments still posted.
+      if (patch.status) {
+        await transition(id, statusIdForTicketStatus(patch.status, statusMap))
+      }
+
       const payload: Record<string, unknown> = {}
       if (patch.title) payload.title = patch.title
       if (patch.severity) {
         const priorityId = priorityIdFor(patch.severity, priorityMap)
         if (priorityId != null) payload.priority_id = priorityId
-      }
-      if (patch.status === "resolved" || patch.status === "closed") {
-        const done = statusMap.done ?? statusMap.closed
-        if (done != null) payload.status_id = done
-      } else if (patch.status === "open") {
-        if (statusMap.open != null) payload.status_id = statusMap.open
-      } else if (patch.status === "in_progress") {
-        const progress =
-          statusMap["in_progress"] ?? statusMap["in-progress"] ?? statusMap.progress
-        if (progress != null) payload.status_id = progress
       }
       if (patch.resolution || patch.notes) {
         const current = await load(id)
@@ -377,21 +451,21 @@ export function createWindshiftStore(input: {
             : ""
         payload.description = `${current?.notes ?? ""}${extra}`.trim()
       }
-      if (Object.keys(payload).length > 0) {
-        const result = await api(`/rest/api/v2/items/${id}`, {
-          method: "PATCH",
-          body: JSON.stringify(payload),
-        })
-        if (!result.ok) throw new Error(`windshift update failed: ${result.status}`)
-      }
+      await patchItem(id, payload)
+
       if (patch.resolution || patch.notes) {
-        await api(`/rest/api/v2/items/${id}/comments`, {
-          method: "POST",
-          body: JSON.stringify({
-            content: patch.resolution ?? patch.notes,
-          }),
-        })
+        const content = patch.notes ?? patch.resolution
+        if (content) {
+          const noteResult = await api(`/rest/api/v2/items/${id}/comments`, {
+            method: "POST",
+            body: JSON.stringify({ content }),
+          })
+          if (!noteResult.ok) {
+            throw new Error(`windshift note failed: ${noteResult.status}`)
+          }
+        }
       }
+
       const record = await load(id)
       if (!record) throw new Error(`windshift item ${id} missing after update`)
       return {
